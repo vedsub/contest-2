@@ -63,6 +63,24 @@ export class Orchestrator {
       stepState.exitCode = result.exitCode
       stepState.error = result.error
 
+      if (result.status === "FAILED") {
+        let changed = true
+        while (changed) {
+          changed = false
+          for (const step of wf.steps) {
+            if (wf.stepState[step.id].status === "PENDING") {
+              const hasFailedOrSkippedDep = step.dependsOn?.some(
+                dep => wf.stepState[dep].status === "FAILED" || wf.stepState[dep].status === "SKIPPED"
+              )
+              if (hasFailedOrSkippedDep) {
+                wf.stepState[step.id].status = "SKIPPED"
+                changed = true
+              }
+            }
+          }
+        }
+      }
+
       if (result.status === "COMPLETED") {
         const stepStatusMap: Record<string, StepStatus> = {}
         for (const [id, state] of Object.entries(wf.stepState)) {
@@ -86,13 +104,13 @@ export class Orchestrator {
       }
 
       const states = Object.values(wf.stepState)
-      const allCompleted = states.every(s => s.status === "COMPLETED")
+      const allTerminal = states.every(s => s.status === "COMPLETED" || s.status === "SKIPPED" || s.status === "FAILED")
       const anyFailed = states.some(s => s.status === "FAILED")
 
-      if (allCompleted) {
-        wf.status = "completed"
-      } else if (anyFailed) {
+      if (anyFailed) {
         wf.status = "failed"
+      } else if (allTerminal) {
+        wf.status = "completed"
       }
 
       setWorkflow(wf.workflowId, wf)
@@ -107,18 +125,16 @@ export class Orchestrator {
       try {
         const poolStatus = podPool.getPoolStatus()
         
-        // Only try to dequeue if we have free pods!
         if (poolStatus.available > 0) {
           const step = await stepQueue.dequeue()
           if (step) {
             console.log(`🚀 Picked up step ${step.stepId}. Sending to PodManager in background...`)
             
-            // 🔥 FIRE AND FORGET: Notice there is NO 'await' here!
             podManager.execute(step).catch(error => {
               console.error(error)
             })
             
-            continue // Immediately loop back to grab the next step
+            continue
           }
         }
         
