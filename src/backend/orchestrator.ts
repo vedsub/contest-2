@@ -4,6 +4,7 @@ import { getReadySteps } from "./dag"
 import { stepQueue } from "../queue/step-queue"
 import { resultQueue } from "../queue/result-queue"
 import { podManager } from "../pod-manager/pod-manager"
+import { podPool } from "../k8s/pod-pool"
 
 export class Orchestrator {
   async submitWorkflow(workflow: Workflow): Promise<void> {
@@ -101,11 +102,29 @@ export class Orchestrator {
   }
 
   private async startStepDispatcher() {
+    console.log("✅ Step dispatcher loop started!")
     while (true) {
-      const step = await stepQueue.dequeue()
-      if (step) {
-        await podManager.execute(step)
-      } else {
+      try {
+        const poolStatus = podPool.getPoolStatus()
+        
+        // Only try to dequeue if we have free pods!
+        if (poolStatus.available > 0) {
+          const step = await stepQueue.dequeue()
+          if (step) {
+            console.log(`🚀 Picked up step ${step.stepId}. Sending to PodManager in background...`)
+            
+            // 🔥 FIRE AND FORGET: Notice there is NO 'await' here!
+            podManager.execute(step).catch(error => {
+              console.error(error)
+            })
+            
+            continue // Immediately loop back to grab the next step
+          }
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      } catch (error) {
+        console.error(error)
         await new Promise(resolve => setTimeout(resolve, 1000))
       }
     }

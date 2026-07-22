@@ -1,6 +1,7 @@
 import { app } from "./backend/server"
 import { podPool } from "./k8s/pod-pool"
 import { redis } from "./queue/redis-client"
+import { orchestrator } from "./backend/orchestrator"
 
 async function main(): Promise<void> {
   await redis.ping()
@@ -18,6 +19,8 @@ async function main(): Promise<void> {
     console.log(`✅ Redis host: ${redisHost}`)
     console.log(`✅ Pod count: ${status.total}`)
   })
+  
+  orchestrator.start().catch(console.error)
 }
 
 main().catch((err: unknown) => {
