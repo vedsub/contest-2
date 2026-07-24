@@ -5,6 +5,7 @@ import type { QueuedStep } from "../types/workflow"
 export class PodManager {
   async execute(step: QueuedStep): Promise<void> {
     let pod
+    let heartbeatInterval: NodeJS.Timeout | null = null
     
     try {
       pod = await podPool.acquirePod()
@@ -16,7 +17,18 @@ export class PodManager {
         status: "RUNNING"
       })
 
+      heartbeatInterval = setInterval(async () => {
+        await resultQueue.push({
+          stepId: step.stepId,
+          workflowId: step.workflowId,
+          podId: pod!.podId,
+          status: "HEARTBEAT" as any
+        })
+      }, 5000)
+
       const stdout = await podPool.execInPod(pod.podId, step.command)
+
+      if (heartbeatInterval) clearInterval(heartbeatInterval)
 
       await resultQueue.push({
         stepId: step.stepId,
@@ -28,6 +40,8 @@ export class PodManager {
       })
 
     } catch (error: any) {
+      if (heartbeatInterval) clearInterval(heartbeatInterval)
+
       if (pod) {
         await resultQueue.push({
           stepId: step.stepId,
